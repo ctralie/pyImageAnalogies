@@ -37,7 +37,7 @@ python ImageAnalogies.py --A images/newflower-src.jpg --Ap images/newflower-embo
 </table>
 
 
-### Nonlinaer Artistic Filter
+### Nonlinear Artistic Filter
 
 ~~~~~ bash
 python ImageAnalogies.py --A images/chair.png --Ap images/chair-stipple.png --B images/girl.png --Bp results/girl-stipple.png --NLevels 4

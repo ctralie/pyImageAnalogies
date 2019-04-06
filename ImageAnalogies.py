@@ -1,7 +1,7 @@
 """
 Programmer: Chris Tralie
 Purpose: To implement the basic features of Image Analogies[1] in Python,
-using pyflann
+using exact nearest neighbors (pyflann would be faster, but has trouble with Python3)
 
 Image Analogies
 A. Hertzmann, C. Jacobs, N. Oliver, B. Curless, D. Salesin.
@@ -212,7 +212,7 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
     #Do multiresolution synthesis
     for level in range(NLevels, -1, -1):
         KSpatial = KFine
-        if level == 0:
+        if level == NLevels:
             KSpatial = KCoarse
         #Step 1: Make features
         APatches = getPatches(rgb2gray(AL[level]), KSpatial)
