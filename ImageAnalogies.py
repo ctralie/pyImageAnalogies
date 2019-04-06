@@ -11,8 +11,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io as sio
 import scipy.misc
-import pyflann
+import skimage.transform
+import imageio
+import argparse
+from sklearn.neighbors import NearestNeighbors
 from skimage.transform import pyramid_gaussian
+
+imresize = lambda x, shape: skimage.transform.resize(x, shape, anti_aliasing=True, mode='constant')
 
 def rgb2gray(rgb):
     """
@@ -43,7 +48,7 @@ def readImage(filename):
         A color channel image converted to floating
         point [0, 1] per channel
     """
-    I = scipy.misc.imread(filename)
+    I = imageio.imread(filename)
     I = np.array(I, dtype=np.float32)/255.0
     return I
 
@@ -62,7 +67,7 @@ def writeImage(I, filename):
     IRet[IRet > 255] = 255
     IRet[IRet < 0] = 0
     IRet = np.array(IRet, dtype=np.uint8)
-    scipy.misc.imsave(filename, IRet)
+    imageio.imwrite(filename, IRet)
 
 def getPatches(I, dim):
     """
@@ -143,8 +148,8 @@ def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
     #TODO: Vectorize code below
     for n in range(dI.size):
         #Indices of pixel picked for neighbor
-        ni = BpLidx[dI[n]+i, dJ[n]+j][0]
-        nj = BpLidx[dI[n]+i, dJ[n]+j][1]
+        ni = BpLidx[int(dI[n]+i), int(dJ[n]+j)][0]
+        nj = BpLidx[int(dI[n]+i), int(dJ[n]+j)][1]
         if ni == -1 or nj == -1:
             continue
         ni = int(ni - dI[n])
@@ -159,7 +164,7 @@ def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
     return (idxmin, minDistSqr)
 
 
-def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5):
+def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debugImages=False):
     """
     Perform image analogies
     Parameters
@@ -181,18 +186,25 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5)
     KFine: int
         Dimension of square patches to sample at the finest level
         of the multiresolution pyramid
+    n_jobs: int
+        Number of parallel processes to run for nearest neighbor search (deafult None)
+    
+    Returns
+    -------
+    Bp: ndarray(M, N, 3)
+        A floating point 3-channel image of the synthesized image analogy
     """
     #Make image pyramids
     AL = tuple(pyramid_gaussian(A, NLevels, downscale = 2))
     ApL = tuple(pyramid_gaussian(Ap, NLevels, downscale = 2))
     BL = tuple(pyramid_gaussian(B, NLevels, downscale = 2))
-    BpL = []
-    BpLidx = []
+    BpL = [] # B' values in pyramid
+    BpLidx = [] # Indices of nearest neighbors at each pixel in pyramid
     print("BL:")
     for i in range(len(BL)):
         print(BL[i].shape)
         BpL.append(np.zeros(BL[i].shape))
-        BpLidx.append(-1*np.ones((BL[i].shape[0], BL[i].shape[1], 2)))
+        BpLidx.append(-1*np.ones((BL[i].shape[0], BL[i].shape[1], 2), dtype=int))
     print("AL:")
     for i in range(len(AL)):
         print(AL[i].shape)
@@ -206,30 +218,28 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5)
         APatches = getPatches(rgb2gray(AL[level]), KSpatial)
         ApPatches = getCausalPatches(rgb2gray(ApL[level]), KSpatial)
         X = np.concatenate((APatches, ApPatches), 2)
-        print("X.shape = ", X.shape)
         B2 = None
         Bp2 = None
         if level < NLevels:
             #Use multiresolution features
-            A2 = scipy.misc.imresize(AL[level+1], AL[level].shape)
-            Ap2 = scipy.misc.imresize(ApL[level+1], ApL[level].shape)
+            A2 = imresize(AL[level+1], AL[level].shape)
+            Ap2 = imresize(ApL[level+1], ApL[level].shape)
             A2Patches = getPatches(rgb2gray(A2), KSpatial)
             Ap2Patches = getPatches(rgb2gray(Ap2), KSpatial)
             X = np.concatenate((X, A2Patches, Ap2Patches), 2)
-            B2 = scipy.misc.imresize(BL[level+1], BL[level].shape)
-            Bp2 = scipy.misc.imresize(BpL[level+1], BpL[level].shape)
-        annList = pyflann.FLANN()
-        annList.build_index(np.reshape(X, [X.shape[0]*X.shape[1], X.shape[2]]))
+            B2 = imresize(BL[level+1], BL[level].shape)
+            Bp2 = imresize(BpL[level+1], BpL[level].shape)
+        nn = NearestNeighbors(n_neighbors=1, algorithm='auto', n_jobs=n_jobs).fit(np.reshape(X, [X.shape[0]*X.shape[1], X.shape[2]]))
 
         #Step 2: Fill in the first few scanLines to prevent the image
         #from getting crap in the beginning
         if level == NLevels:
             I = np.array(ApL[level]*255, dtype = np.uint8)
-            I = scipy.misc.imresize(I, BpL[level].shape)
+            I = imresize(I, BpL[level].shape)
             BpL[level] = np.array(I/255.0, dtype = np.float64)
         else:
             I = np.array(BpL[level+1]*255, dtype = np.uint8)
-            I = scipy.misc.imresize(I, BpL[level].shape)
+            I = imresize(I, BpL[level].shape)
             BpL[level] = np.array(I/255.0, dtype = np.float64)
 
         #Step 3: Fill in the pixels in scanline order
@@ -251,35 +261,45 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5)
                     BpPatch = rgb2gray(Bp2[i-d:i+d+1, j-d:j+d+1, :])
                     F = np.concatenate((F, BPatch.flatten(), BpPatch.flatten()))
                 #Find index of most closely matching feature point in A
-                #DistSqrFn = XSqr + np.sum(F**2) - 2*X.dot(F)
-                idx = annList.nn_index(F)[0].flatten()
+                dist, idx = nn.kneighbors(F[None, :])
+                idx = int(idx[0])
+                distSqr = dist**2
                 idx = np.unravel_index(idx, (X.shape[0], X.shape[1]))
                 if Kappa > 0:
                 #Compare with coherent pixel
                     (idxc, distSqrc) = getCoherenceMatch(X, F, BpLidx[level], KSpatial, i, j)
-                    distSqr = np.sum((X[idx[0], idx[1]] - F)**2)
                     fac = 1 + Kappa*(2.0**(level - NLevels))
                     if distSqrc < distSqr*fac*fac:
                         idx = idxc
                 BpLidx[level][i, j, :] = idx
                 BpL[level][i, j, :] = ApL[level][idx[0]+d, idx[1]+d, :]
-            if i%20 == 0:
+            if i%20 == 0 and debugImages:
                 writeImage(BpL[level], "%i.png"%level)
-        plt.subplot(122)
-        plt.imshow(BpLidx[level][:, :, 0], cmap = 'Spectral')
-        plt.title("Y")
-        plt.subplot(121)
-        plt.imshow(BpLidx[level][:, :, 1], cmap = 'Spectral')
-        plt.title("X")
-        plt.savefig("%i_idx.png"%level, bbox_inches = 'tight')
+        if debugImages:
+            plt.subplot(122)
+            plt.imshow(BpLidx[level][:, :, 0], cmap = 'Spectral')
+            plt.title("Y")
+            plt.subplot(121)
+            plt.imshow(BpLidx[level][:, :, 1], cmap = 'Spectral')
+            plt.title("X")
+            plt.savefig("%i_idx.png"%level, bbox_inches = 'tight')
     return BpL[0]
 
-def testCyclops():
-    A = readImage("images/me-mask.png")
-    Ap = readImage("images/me.jpg")
-    B = readImage("images/cyclopsmask.png")
-    res = doImageAnalogies(A, Ap, B, Kappa = 0.1, NLevels = 2)
-
-
 if __name__ == '__main__':
-    testCyclops()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--A', type=str, required=True, help="Path to A image")
+    parser.add_argument('--Ap', type=str, required=True, help="Path to A' Image")
+    parser.add_argument('--B', type=str, required=True, help="Path to B Image")
+    parser.add_argument('--Bp', type=str, required=True, help="Path to which to save B' Image")
+    parser.add_argument('--Kappa', type=float, default=0.0, help="Coherence parameter (higher means coherence is favored over matches)")
+    parser.add_argument('--NLevels', type=int, default=2, help="Number of levels to use in multiresolution pyramid")
+    parser.add_argument('--KCoarse', type=int, default=5, help="Resolution of coarse patches")
+    parser.add_argument('--KFine', type=int, default=5, help="Resolution of finer patches")
+    parser.add_argument('--njobs', type=int, default=1, help="Number of parallel processes to use in nearest neighbor search")
+    parser.add_argument('--debugImages', type=int, default=0, help="Whether to output all images in pyramid and chosen indices progressively as B' is being constructed")
+    opt = parser.parse_args()
+
+    A = readImage(opt.A)
+    Ap = readImage(opt.Ap)
+    B = readImage(opt.B)
+    Bp = doImageAnalogies(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debugImages = bool(opt.debugImages))

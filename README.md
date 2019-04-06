@@ -6,8 +6,11 @@ A Python implementation of the basic features Image Analogies technique for styl
 
 
 ## Dependencies
+All of the dependencies below are pip installable
 * Numpy/Scipy/Matplotlib
 * scikit-image
+* imageio
+* sklearn
 
 
 ## Running
@@ -16,6 +19,16 @@ To see all options, run the script as follows
 python ImageAnalogies.py --help
 ~~~~~
 
+Below are some examples
+
+~~~~~ bash
+python ImageAnalogies.py --A images/me-mask.png --Ap images/me.jpg --B images/cyclopsmask.png --Bp results/mecyclops.png --Kappa 0.1 --NLevels 2 
+~~~~~
+
+<table>
+<tr><td><img src = "images/me-mask.png"></td><td><img src = "images/me.jpg"></td></tr>
+<tr><td><img src = "images/cyclopsmask.png"></td><td><img src = "results/mecyclops.png"></td></tr>
+</table>
 
 
 [1]: <https://mrl.nyu.edu/projects/image-analogies/>
