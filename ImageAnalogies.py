@@ -296,10 +296,11 @@ if __name__ == '__main__':
     parser.add_argument('--KCoarse', type=int, default=5, help="Resolution of coarse patches")
     parser.add_argument('--KFine', type=int, default=5, help="Resolution of finer patches")
     parser.add_argument('--njobs', type=int, default=1, help="Number of parallel processes to use in nearest neighbor search")
-    parser.add_argument('--debugImages', type=int, default=0, help="Whether to output all images in pyramid and chosen indices progressively as B' is being constructed")
+    parser.add_argument('--debugImages', type=int, default=1, help="Whether to output all images in pyramid and chosen indices progressively as B' is being constructed")
     opt = parser.parse_args()
 
     A = readImage(opt.A)
     Ap = readImage(opt.Ap)
     B = readImage(opt.B)
     Bp = doImageAnalogies(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debugImages = bool(opt.debugImages))
+    writeImage(Bp, opt.Bp)
