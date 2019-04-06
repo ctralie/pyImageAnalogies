@@ -19,14 +19,20 @@ To see all options, run the script as follows
 python ImageAnalogies.py --help
 ~~~~~
 
+## Examples
+
 Below are some examples
+
+### Texture By Numbers
 
 ~~~~~ bash
 python ImageAnalogies.py --A images/me-mask.png --Ap images/me.jpg --B images/cyclopsmask.png --Bp results/mecyclops.png --Kappa 0.1 --NLevels 2 
 ~~~~~
 
 <table>
+<tr><td><h2>A</h2></td><td><h2>A'</h2></td></tr>
 <tr><td><img src = "images/me-mask.png"></td><td><img src = "images/me.jpg"></td></tr>
+<tr><td><h2>B</h2></td><td><h2>B'</h2></td></tr>
 <tr><td><img src = "images/cyclopsmask.png"></td><td><img src = "results/mecyclops.png"></td></tr>
 </table>
 
