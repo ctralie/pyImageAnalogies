@@ -9,13 +9,12 @@ SIGGRAPH 2001 Conference Proceedings.
 """
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.io as sio
-import scipy.misc
 import skimage.transform
 import imageio
 import argparse
 from sklearn.neighbors import NearestNeighbors
 from skimage.transform import pyramid_gaussian
+from tqdm import tqdm
 
 imresize = lambda x, shape: skimage.transform.resize(x, shape, anti_aliasing=True, mode='constant')
 
@@ -35,7 +34,7 @@ def rgb2gray(rgb):
     gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
     return gray
 
-def readImage(filename):
+def read_image(filename):
     """
     Load an image from disk
     Parameters
@@ -50,9 +49,16 @@ def readImage(filename):
     """
     I = imageio.imread(filename)
     I = np.array(I, dtype=np.float32)/255.0
+    if len(I.shape) == 2:
+        # Stack grayscale to fake a color image
+        I = I[:, :, None]
+        I = np.concatenate((I, I, I), axis=2)
+    if I.shape[2] > 3:
+        # Only use RGB
+        I = I[:, :, 0:3]
     return I
 
-def writeImage(I, filename):
+def write_image(I, filename):
     """
     Write a floating point image to disk after rounding
     to the nearest byte for each color channel
@@ -69,7 +75,7 @@ def writeImage(I, filename):
     IRet = np.array(IRet, dtype=np.uint8)
     imageio.imwrite(filename, IRet)
 
-def getPatches(I, dim):
+def get_patches(I, dim):
     """
     Given an an MxN single channel image I, get all dimxdim dimensional
     patches
@@ -96,7 +102,7 @@ def getPatches(I, dim):
     P = np.reshape(P, [P.shape[0], P.shape[1], dim*dim])
     return P
 
-def getCausalPatches(I, dim):
+def get_causal_patches(I, dim):
     """
     Assuming dim is odd, return L-shaped patches that would
     occur in raster order
@@ -107,7 +113,7 @@ def getCausalPatches(I, dim):
     dim: int
         Dimension of patches
     """
-    P = getPatches(I, dim)
+    P = get_patches(I, dim)
     k = int((dim*dim-1)/2)
     P = P[:, :, 0:k]
     return P
@@ -164,7 +170,7 @@ def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
     return (idxmin, minDistSqr)
 
 
-def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debugImages=False):
+def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False):
     """
     Perform image analogies
     Parameters
@@ -195,9 +201,9 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
         A floating point 3-channel image of the synthesized image analogy
     """
     #Make image pyramids
-    AL = tuple(pyramid_gaussian(A, NLevels, downscale = 2))
-    ApL = tuple(pyramid_gaussian(Ap, NLevels, downscale = 2))
-    BL = tuple(pyramid_gaussian(B, NLevels, downscale = 2))
+    AL = tuple(pyramid_gaussian(A, NLevels, downscale = 2, channel_axis=-1))
+    ApL = tuple(pyramid_gaussian(Ap, NLevels, downscale = 2, channel_axis=-1))
+    BL = tuple(pyramid_gaussian(B, NLevels, downscale = 2, channel_axis=-1))
     BpL = [] # B' values in pyramid
     BpLidx = [] # Indices of nearest neighbors at each pixel in pyramid
     print("BL:")
@@ -211,12 +217,13 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
 
     #Do multiresolution synthesis
     for level in range(NLevels, -1, -1):
+        print("Doing level", level)
         KSpatial = KFine
         if level == NLevels:
             KSpatial = KCoarse
         #Step 1: Make features
-        APatches = getPatches(rgb2gray(AL[level]), KSpatial)
-        ApPatches = getCausalPatches(rgb2gray(ApL[level]), KSpatial)
+        APatches = get_patches(rgb2gray(AL[level]), KSpatial)
+        ApPatches = get_causal_patches(rgb2gray(ApL[level]), KSpatial)
         X = np.concatenate((APatches, ApPatches), 2)
         B2 = None
         Bp2 = None
@@ -224,8 +231,8 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
             #Use multiresolution features
             A2 = imresize(AL[level+1], AL[level].shape)
             Ap2 = imresize(ApL[level+1], ApL[level].shape)
-            A2Patches = getPatches(rgb2gray(A2), KSpatial)
-            Ap2Patches = getPatches(rgb2gray(Ap2), KSpatial)
+            A2Patches = get_patches(rgb2gray(A2), KSpatial)
+            Ap2Patches = get_patches(rgb2gray(Ap2), KSpatial)
             X = np.concatenate((X, A2Patches, Ap2Patches), 2)
             B2 = imresize(BL[level+1], BL[level].shape)
             Bp2 = imresize(BpL[level+1], BpL[level].shape)
@@ -244,8 +251,7 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
 
         #Step 3: Fill in the pixels in scanline order
         d = int((KSpatial-1)/2)
-        for i in range(d, BpL[level].shape[0]-d):
-            print(i)
+        for i in tqdm(range(d, BpL[level].shape[0]-d)):
             for j in range(d, BpL[level].shape[1]-d):
                 #Make the feature at this pixel
                 #Full patch B
@@ -262,20 +268,20 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
                     F = np.concatenate((F, BPatch.flatten(), BpPatch.flatten()))
                 #Find index of most closely matching feature point in A
                 dist, idx = nn.kneighbors(F[None, :])
-                idx = int(idx[0])
+                idx = int(idx[0][0])
                 distSqr = dist**2
                 idx = np.unravel_index(idx, (X.shape[0], X.shape[1]))
                 if Kappa > 0:
-                #Compare with coherent pixel
+                    #Compare with coherent pixel
                     (idxc, distSqrc) = getCoherenceMatch(X, F, BpLidx[level], KSpatial, i, j)
                     fac = 1 + Kappa*(2.0**(level - NLevels))
                     if distSqrc < distSqr*fac*fac:
                         idx = idxc
                 BpLidx[level][i, j, :] = idx
                 BpL[level][i, j, :] = ApL[level][idx[0]+d, idx[1]+d, :]
-            if i%20 == 0 and debugImages:
-                writeImage(BpL[level], "%i.png"%level)
-        if debugImages:
+            if i%20 == 0 and debug_images:
+                write_image(BpL[level], "%i.png"%level)
+        if debug_images:
             plt.subplot(122)
             plt.imshow(BpLidx[level][:, :, 0], cmap = 'Spectral')
             plt.title("Y")
@@ -299,8 +305,8 @@ if __name__ == '__main__':
     parser.add_argument('--debugImages', type=int, default=1, help="Whether to output all images in pyramid and chosen indices progressively as B' is being constructed")
     opt = parser.parse_args()
 
-    A = readImage(opt.A)
-    Ap = readImage(opt.Ap)
-    B = readImage(opt.B)
-    Bp = doImageAnalogies(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debugImages = bool(opt.debugImages))
-    writeImage(Bp, opt.Bp)
+    A = read_image(opt.A)
+    Ap = read_image(opt.Ap)
+    B = read_image(opt.B)
+    Bp = doImageAnalogies(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debug_images = bool(opt.debugImages))
+    write_image(Bp, opt.Bp)
