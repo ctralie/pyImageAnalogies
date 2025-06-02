@@ -114,8 +114,8 @@ def get_causal_patches(I, dim):
         Dimension of patches
     """
     P = get_patches(I, dim)
-    k = int((dim*dim-1)/2)
-    P = P[:, :, 0:k]
+    carea = (dim*dim)//2 # Causal area
+    P = P[:, :, 0:carea]
     return P
 
 def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
@@ -235,7 +235,7 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
         KSpatial = KFine
         if level == NLevels:
             KSpatial = KCoarse
-        #Step 1: Make features
+        ## Step 1: Make features
         APatches = get_patches(AL[level], KSpatial)
         ApPatches = get_causal_patches(ApL[level], KSpatial)
         X = np.concatenate((APatches, ApPatches), 2)
@@ -252,8 +252,8 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
             Bp2 = imresize(BpL[level+1], BpL[level].shape)
         nn = NearestNeighbors(n_neighbors=1, algorithm='auto', n_jobs=n_jobs).fit(np.reshape(X, [X.shape[0]*X.shape[1], X.shape[2]]))
 
-        #Step 2: Fill in the first few scanLines to prevent the image
-        #from getting crap in the beginning
+        ## Step 2: Fill in the first few scanLines to prevent the image
+        ## from getting crap in the beginning
         if level == NLevels:
             I = np.array(ApL[level]*255, dtype = np.uint8)
             I = imresize(I, BpL[level].shape)
@@ -263,24 +263,25 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
             I = imresize(I, BpL[level].shape)
             BpL[level] = np.array(I/255.0, dtype = np.float64)
 
-        #Step 3: Fill in the pixels in scanline order
-        d = int((KSpatial-1)/2)
-        #sz = KSpatial*KSpatial + KSpatial*(KSpatial-1)//2  #B, Bp
+        ## Step 3: Fill in the pixels in scanline order
+        d = (KSpatial-1)//2
+        area  = KSpatial*KSpatial # Area
+        carea = area//2 # Causal area
+        sz = area + carea  #B, Bp
+        if level < NLevels:
+            sz += area*2
+        F = np.zeros(sz)
         for i in tqdm(range(d, BpL[level].shape[0]-d)):
             for j in range(d, BpL[level].shape[1]-d):
                 #Make the feature at this pixel
                 #Full patch B
-                BPatch = BL[level][i-d:i+d+1, j-d:j+d+1]
+                F[0:area] = BL[level][i-d:i+d+1, j-d:j+d+1].flatten()
                 #Causal patch B'
-                BpPatch = BpL[level][i-d:i+d+1, j-d:j+d+1].flatten()
-                BpPatch = BpPatch[0:int((KSpatial*KSpatial-1)/2)]
-                F = np.concatenate((BPatch.flatten(), BpPatch.flatten()))
-
+                F[area:area+carea] = BpL[level][i-d:i+d+1, j-d:j+d+1].flatten()[0:carea]
                 if level < NLevels:
                     #Use multiresolution features
-                    BPatch = B2[i-d:i+d+1, j-d:j+d+1]
-                    BpPatch = Bp2[i-d:i+d+1, j-d:j+d+1]
-                    F = np.concatenate((F, BPatch.flatten(), BpPatch.flatten()))
+                    F[area+carea: area*2+carea] = B2[i-d:i+d+1, j-d:j+d+1].flatten()
+                    F[area*2+carea:] = Bp2[i-d:i+d+1, j-d:j+d+1].flatten()
                 #Find index of most closely matching feature point in A
                 dist, idx = nn.kneighbors(F[None, :])
                 idx = int(idx[0][0])
