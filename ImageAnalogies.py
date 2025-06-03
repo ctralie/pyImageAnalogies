@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 import skimage.transform
 import imageio
 import argparse
-from sklearn.neighbors import NearestNeighbors
 from skimage.transform import pyramid_gaussian
 from tqdm import tqdm
+import time
 
 imresize = lambda x, shape: skimage.transform.resize(x, shape, anti_aliasing=True, mode='constant')
 
@@ -75,47 +75,59 @@ def write_image(I, filename):
     IRet = np.array(IRet, dtype=np.uint8)
     imageio.imwrite(filename, IRet)
 
-def get_patches(I, dim):
+def get_patches(I, dim, i, j):
     """
-    Given an an MxN single channel image I, get all dimxdim dimensional
-    patches
+    Sample patches from a (possibly color) image
+
     Parameters
     ----------
-    I: ndarray(M, N)
-        Single channel image
+    I: ndarray(M, N, ...)
+        Image from which to sample patches
     dim: int
         Dimension of patches
+    i: ndarray(n_patches, dtype=int)
+        Row of patch
+    j: ndarray(n_patches, dtype=int)
+        Column of patch
+    
     Returns
     -------
-    P: ndarray((M-dim+1), (N-dim+1), dimxdim))
-        Array of flattened patches
+    patches: ndarray(n_patches, dim*dim)
+        Array of patches
     """
-    #http://stackoverflow.com/questions/13682604/slicing-a-numpy-image-array-into-blocks
-    shape = np.array(I.shape*2)
-    strides = np.array(I.strides*2)
-    W = np.asarray(dim)
-    shape[I.ndim:] = W
-    shape[:I.ndim] -= W - 1
-    if np.any(shape < 1):
-        raise ValueError('Window size %i is too large for image'%dim)
-    P = np.lib.stride_tricks.as_strided(I, shape=shape, strides=strides)
-    P = np.reshape(P, [P.shape[0], P.shape[1], dim*dim])
-    return P
+    n_patches = i.size
+    pix = np.arange(dim)
+    ii, jj = np.meshgrid(pix, pix, indexing='ij')
+    ii = ii.flatten()
+    jj = jj.flatten()
+    ii = (i[:, None] + ii[None, :]).flatten()
+    jj = (j[:, None] + jj[None, :]).flatten()
+    patches = I[ii, jj, ...]
+    nch = 1
+    if len(I.shape) > 2:
+        nch = I.shape[2]
+    return np.reshape(patches, (n_patches, dim*dim*nch))
 
-def get_causal_patches(I, dim):
+
+def get_causal_patches(I, dim, i, j):
     """
     Assuming dim is odd, return L-shaped patches that would
     occur in raster order
+
     Parameters
     ----------
     I: ndarray(M, N)
         Single channel image
     dim: int
         Dimension of patches
+    i: ndarray(n_patches, dtype=int)
+        Row of patch
+    j: ndarray(n_patches, dtype=int)
+        Column of patch
     """
-    P = get_patches(I, dim)
+    P = get_patches(I, dim, i, j)
     carea = (dim*dim)//2 # Causal area
-    P = P[:, :, 0:carea]
+    P = P[:, 0:carea]
     return P
 
 def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
@@ -170,7 +182,7 @@ def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
     return (idxmin, minDistSqr)
 
 
-def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False):
+def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False, use_ann=True):
     """
     Perform image analogies
     Parameters
@@ -194,6 +206,8 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
         of the multiresolution pyramid
     n_jobs: int
         Number of parallel processes to run for nearest neighbor search (deafult None)
+    use_ann: bool
+        If True, use approximate nearest neighbors.  If False, use exact nearest neighbors
     
     Returns
     -------
@@ -232,25 +246,40 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
     #Do multiresolution synthesis
     for level in range(NLevels, -1, -1):
         print("Doing level", level)
+        total_time = 0
         KSpatial = KFine
         if level == NLevels:
             KSpatial = KCoarse
         ## Step 1: Make features
-        APatches = get_patches(AL[level], KSpatial)
-        ApPatches = get_causal_patches(ApL[level], KSpatial)
-        X = np.concatenate((APatches, ApPatches), 2)
+        ## Step 1a: Determine location of patches
+        shape = [AL[level].shape[0]-KSpatial+1, AL[level].shape[1]-KSpatial+1]
+        ipatch, jpatch = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing='ij')
+        ipatch = ipatch.flatten()
+        jpatch = jpatch.flatten()
+        ## Step 1b: Get patches
+        APatches = get_patches(AL[level], KSpatial, ipatch, jpatch)
+        ApPatches = get_causal_patches(ApL[level], KSpatial, ipatch, jpatch)
+        X = np.concatenate((APatches, ApPatches), 1)
         B2 = None
         Bp2 = None
         if level < NLevels:
-            #Use multiresolution features
+            # Step 1c: Use multiresolution features if necessary
             A2 = imresize(AL[level+1], AL[level].shape)
             Ap2 = imresize(ApL[level+1], ApL[level].shape)
-            A2Patches = get_patches(A2, KSpatial)
-            Ap2Patches = get_patches(Ap2, KSpatial)
-            X = np.concatenate((X, A2Patches, Ap2Patches), 2)
+            A2Patches = get_patches(A2, KSpatial, ipatch, jpatch)
+            Ap2Patches = get_patches(Ap2, KSpatial, ipatch, jpatch)
+            X = np.concatenate((X, A2Patches, Ap2Patches), 1)
             B2 = imresize(BL[level+1], BL[level].shape)
             Bp2 = imresize(BpL[level+1], BpL[level].shape)
-        nn = NearestNeighbors(n_neighbors=1, algorithm='auto', n_jobs=n_jobs).fit(np.reshape(X, [X.shape[0]*X.shape[1], X.shape[2]]))
+        # Step 1d: Setup nearest neighbor structures
+        nn = None
+        if use_ann:
+            from pynndescent import NNDescent
+            nn = NNDescent(X)
+        else:
+            from sklearn.neighbors import NearestNeighbors
+            nn = NearestNeighbors(n_neighbors=1, algorithm='auto', n_jobs=n_jobs).fit(X)
+        
 
         ## Step 2: Fill in the first few scanLines to prevent the image
         ## from getting crap in the beginning
@@ -283,21 +312,29 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
                     F[area+carea: area*2+carea] = B2[i-d:i+d+1, j-d:j+d+1].flatten()
                     F[area*2+carea:] = Bp2[i-d:i+d+1, j-d:j+d+1].flatten()
                 #Find index of most closely matching feature point in A
-                dist, idx = nn.kneighbors(F[None, :])
-                idx = int(idx[0][0])
+                tic = time.time()
+                if use_ann:
+                    idx, dist = nn.query(F[None, :], k=1)
+                else:
+                    dist, idx = nn.kneighbors(F[None, :])
+                total_time += time.time()-tic
                 distSqr = dist**2
-                idx = np.unravel_index(idx, (X.shape[0], X.shape[1]))
+                idx = int(idx[0][0])
+                idx = [ipatch[idx], jpatch[idx]]
+                """
                 if Kappa > 0:
                     #Compare with coherent pixel
                     (idxc, distSqrc) = getCoherenceMatch(X, F, BpLidx[level], KSpatial, i, j)
                     fac = 1 + Kappa*(2.0**(level - NLevels))
                     if distSqrc < distSqr*fac*fac:
                         idx = idxc
+                """
                 BpLidx[level][i, j, :] = idx
                 BpL[level][i, j] = ApL[level][idx[0]+d, idx[1]+d]
                 BpLColor[level][i, j, ...] = ApLColor[level][idx[0]+d, idx[1]+d, :]
             if i%20 == 0 and debug_images:
                 write_image(BpLColor[level], "%i.png"%level)
+        print("Time nearest neighbors:", total_time)
         if debug_images:
             plt.subplot(122)
             plt.imshow(BpLidx[level][:, :, 0], cmap = 'Spectral')
@@ -320,10 +357,11 @@ if __name__ == '__main__':
     parser.add_argument('--KFine', type=int, default=5, help="Resolution of finer patches")
     parser.add_argument('--njobs', type=int, default=1, help="Number of parallel processes to use in nearest neighbor search")
     parser.add_argument('--debugImages', type=int, default=1, help="Whether to output all images in pyramid and chosen indices progressively as B' is being constructed")
+    parser.add_argument('--ann', type=int, default=1, help="If 1, use approximate nearest neighbors (requires pynndescent).  If 0, revert to sklearn exact nearest neighbors")
     opt = parser.parse_args()
 
     A = read_image(opt.A)
     Ap = read_image(opt.Ap)
     B = read_image(opt.B)
-    Bp = doImageAnalogies(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debug_images = bool(opt.debugImages))
+    Bp = doImageAnalogies(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debug_images=bool(opt.debugImages), use_ann=(opt.ann == 1))
     write_image(Bp, opt.Bp)
