@@ -130,24 +130,31 @@ def get_causal_patches(I, dim, i, j):
     P = P[:, 0:carea]
     return P
 
-def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
+def get_coherence_match(x0, BL, BpL, B2, Bp2, BpLidx, dim, i, j):
     """
-    Return the best coherence match
+    Return the best coherence match based on pixels that have already been chosen
+
     Parameters
     ----------
-    X: ndarray(M, N, DimFeatures)
-        Array of feature vectors at each pixel
     x0: ndarray(DimFeatures)
         The feature vector of the pixel that's being filled in
+    BL: ndarray(M, N)
+        B image at this level
+    BpL: ndarray(M, N)
+        B' image at this level
+    B2: ndarray(M, N)
+        B image one level up, resized to this resolution (or empty array if there is nothing above)
+    Bp2: ndarray(M, N)
+        B' image one level up, resized to this resolution (or empty array if there is nothing above)
     BpLidx: ndarray(MxN)
         An MxN array of raveled indices from which pixels have
-        been drawn so far
+        been drawn so far at this level
     dim: int
         Dimension of patch
     i: int
-        Row of pixel
+        Row of pixel currently being processed
     j: int
-        Column of pixel
+        Column of pixel currently being processed
     Returns
     -------
     idxMin: int
@@ -155,15 +162,21 @@ def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
     minDistSqr: float   
         Squared distance of the closest patch
     """
-    k = int((dim*dim-1)/2)
-    M = X.shape[0]
-    N = X.shape[1]
+    area  = dim*dim # Area
+    carea = area//2 # Causal area
+    M = BL.shape[0]
+    N = BL.shape[1]
     minDistSqr = np.inf
     idxmin = [-1, -1]
-    [dJ, dI] = np.meshgrid(np.arange(dim), np.arange(dim))
-    dI = np.array(dI.flatten()[0:k], dtype = np.int64) - (dim-1)/2
-    dJ = np.array(dJ.flatten()[0:k], dtype = np.int64) - (dim-1)/2
+    d = (dim-1)//2
+    [dI, dJ] = np.meshgrid(np.arange(dim), np.arange(dim), indexing='ij')
+    dI = np.array(dI.flatten()[0:carea], dtype = np.int64) - d
+    dJ = np.array(dJ.flatten()[0:carea], dtype = np.int64) - d
     #TODO: Vectorize code below
+    sz = area + carea  #B, Bp
+    if B2.size > 0:
+        sz += area*2
+    x = np.zeros(sz)
     for n in range(dI.size):
         #Indices of pixel picked for neighbor
         ni = BpLidx[int(dI[n]+i), int(dJ[n]+j)][0]
@@ -172,9 +185,18 @@ def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
             continue
         ni = int(ni - dI[n])
         nj = int(nj - dJ[n])
-        if ni < 0 or nj < 0 or ni >= M or nj >= N:
+        if ni - dim < 0 or nj - dim < 0 or ni + dim >= M or nj + dim >= N:
             continue
-        x = X[ni, nj, :]
+
+        #Full patch B
+        x[0:area] = BL[ni-d:ni+d+1, nj-d:nj+d+1].flatten()
+        #Causal patch B'
+        x[area:area+carea] = BpL[ni-d:ni+d+1, nj-d:nj+d+1].flatten()[0:carea]
+        if B2.size > 0:
+            #Use multiresolution features
+            x[area+carea: area*2+carea] = B2[ni-d:ni+d+1, nj-d:nj+d+1].flatten()
+            x[area*2+carea:] = Bp2[ni-d:ni+d+1, nj-d:nj+d+1].flatten()
+
         distSqr = np.sum((x - x0)**2)
         if distSqr < minDistSqr:
             minDistSqr = distSqr
@@ -182,7 +204,7 @@ def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
     return (idxmin, minDistSqr)
 
 
-def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False, use_ann=True):
+def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False, use_ann=True):
     """
     Perform image analogies
     Parameters
@@ -247,9 +269,17 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
     for level in range(NLevels, -1, -1):
         print("Doing level", level)
         total_time = 0
+        ## Step 0: Work out dimension of patches
         KSpatial = KFine
         if level == NLevels:
             KSpatial = KCoarse
+        d = (KSpatial-1)//2
+        area  = KSpatial*KSpatial # Area
+        carea = area//2 # Causal area
+        sz = area + carea  #B, Bp
+        if level < NLevels:
+            sz += area*2
+
         ## Step 1: Make features
         ## Step 1a: Determine location of patches
         shape = [AL[level].shape[0]-KSpatial+1, AL[level].shape[1]-KSpatial+1]
@@ -260,8 +290,8 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
         APatches = get_patches(AL[level], KSpatial, ipatch, jpatch)
         ApPatches = get_causal_patches(ApL[level], KSpatial, ipatch, jpatch)
         X = np.concatenate((APatches, ApPatches), 1)
-        B2 = None
-        Bp2 = None
+        B2 = np.array([])
+        Bp2 = np.array([])
         if level < NLevels:
             # Step 1c: Use multiresolution features if necessary
             A2 = imresize(AL[level+1], AL[level].shape)
@@ -293,12 +323,6 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
             BpL[level] = np.array(I/255.0, dtype = np.float64)
 
         ## Step 3: Fill in the pixels in scanline order
-        d = (KSpatial-1)//2
-        area  = KSpatial*KSpatial # Area
-        carea = area//2 # Causal area
-        sz = area + carea  #B, Bp
-        if level < NLevels:
-            sz += area*2
         F = np.zeros(sz)
         for i in tqdm(range(d, BpL[level].shape[0]-d)):
             for j in range(d, BpL[level].shape[1]-d):
@@ -324,7 +348,7 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5,
                 """
                 if Kappa > 0:
                     #Compare with coherent pixel
-                    (idxc, distSqrc) = getCoherenceMatch(X, F, BpLidx[level], KSpatial, i, j)
+                    (idxc, distSqrc) = get_coherence_match(F, BL[level], BpL[level], B2, Bp2, BpLidx[level], KSpatial, i, j) 
                     fac = 1 + Kappa*(2.0**(level - NLevels))
                     if distSqrc < distSqr*fac*fac:
                         idx = idxc
@@ -363,5 +387,5 @@ if __name__ == '__main__':
     A = read_image(opt.A)
     Ap = read_image(opt.Ap)
     B = read_image(opt.B)
-    Bp = doImageAnalogies(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debug_images=bool(opt.debugImages), use_ann=(opt.ann == 1))
+    Bp = imanalogy(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debug_images=bool(opt.debugImages), use_ann=(opt.ann == 1))
     write_image(Bp, opt.Bp)
