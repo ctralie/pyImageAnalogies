@@ -84,7 +84,7 @@ def get_patches(I, dim, i, j):
     I: ndarray(M, N, ...)
         Image from which to sample patches
     dim: int
-        Dimension of patches
+        Dimension of patches, assumed to be odd
     i: ndarray(n_patches, dtype=int)
         Row of patch
     j: ndarray(n_patches, dtype=int)
@@ -95,6 +95,10 @@ def get_patches(I, dim, i, j):
     patches: ndarray(n_patches, dim*dim)
         Array of patches
     """
+    ## Step 1: Zeropad
+    d = (dim-1)//2
+    I = np.pad(I, (d, d))
+    ## Step 2: Sample patches
     n_patches = i.size
     pix = np.arange(dim)
     ii, jj = np.meshgrid(pix, pix, indexing='ij')
@@ -119,7 +123,7 @@ def get_causal_patches(I, dim, i, j):
     I: ndarray(M, N)
         Single channel image
     dim: int
-        Dimension of patches
+        Dimension of patches, assumed to be odd
     i: ndarray(n_patches, dtype=int)
         Row of patch
     j: ndarray(n_patches, dtype=int)
@@ -130,7 +134,17 @@ def get_causal_patches(I, dim, i, j):
     P = P[:, 0:carea]
     return P
 
-def get_coherence_match(x0, BL, BpL, B2, Bp2, BpLidx, dim, i, j):
+
+def get_zeropadded_patch(img, i, j, d):
+    res = img[max(0, i-d):i+d+1, max(0, j-d):j+d+1]
+    di = 2*d + 1 - res.shape[0]
+    dj = 2*d + 1 - res.shape[1]
+    if di > 0 or dj > 0:
+        res = np.pad(res, ((0, di), (0, dj)))
+    return res
+
+
+def get_coherence_match(x0, AL, ApL, A2, Ap2, BpLidx, dim, i, j):
     """
     Return the best coherence match based on pixels that have already been chosen
 
@@ -138,15 +152,15 @@ def get_coherence_match(x0, BL, BpL, B2, Bp2, BpLidx, dim, i, j):
     ----------
     x0: ndarray(DimFeatures)
         The feature vector of the pixel that's being filled in
-    BL: ndarray(M, N)
-        B image at this level
-    BpL: ndarray(M, N)
-        B' image at this level
-    B2: ndarray(M, N)
-        B image one level up, resized to this resolution (or empty array if there is nothing above)
-    Bp2: ndarray(M, N)
-        B' image one level up, resized to this resolution (or empty array if there is nothing above)
-    BpLidx: ndarray(MxN)
+    AL: ndarray(M, N)
+        A image at this level
+    ApL: ndarray(M, N)
+        A' image at this level
+    A2: ndarray(M, N)
+        A image one level up, resized to this resolution (or empty array if there is nothing above)
+    Ap2: ndarray(M, N)
+        A' image one level up, resized to this resolution (or empty array if there is nothing above)
+    ApLidx: ndarray(MxN)
         An MxN array of raveled indices from which pixels have
         been drawn so far at this level
     dim: int
@@ -164,8 +178,6 @@ def get_coherence_match(x0, BL, BpL, B2, Bp2, BpLidx, dim, i, j):
     """
     area  = dim*dim # Area
     carea = area//2 # Causal area
-    M = BL.shape[0]
-    N = BL.shape[1]
     minDistSqr = np.inf
     idxmin = [-1, -1]
     d = (dim-1)//2
@@ -174,34 +186,38 @@ def get_coherence_match(x0, BL, BpL, B2, Bp2, BpLidx, dim, i, j):
     dJ = np.array(dJ.flatten()[0:carea], dtype = np.int64) - d
     #TODO: Vectorize code below
     sz = area + carea  #B, Bp
-    if B2.size > 0:
+    if A2.size > 0:
         sz += area*2
     x = np.zeros(sz)
     for n in range(dI.size):
         #Indices of pixel picked for neighbor
-        ni = BpLidx[int(dI[n]+i), int(dJ[n]+j)][0]
-        nj = BpLidx[int(dI[n]+i), int(dJ[n]+j)][1]
+        ii = int(dI[n] + i)
+        jj = int(dJ[n] + j)
+        if ii < 0 or jj < 0 or ii >= BpLidx.shape[0] or jj >= BpLidx.shape[1]:
+            continue
+        ni, nj = BpLidx[ii, jj]
         if ni == -1 or nj == -1:
             continue
         ni = int(ni - dI[n])
         nj = int(nj - dJ[n])
-        if ni - dim < 0 or nj - dim < 0 or ni + dim >= M or nj + dim >= N:
+        if ni < 0 or nj < 0 or ni >= AL.shape[0] or nj >= AL.shape[1]:
             continue
 
         #Full patch B
-        x[0:area] = BL[ni-d:ni+d+1, nj-d:nj+d+1].flatten()
+        x[0:area] = get_zeropadded_patch(AL, ni, nj, d).flatten()
         #Causal patch B'
-        x[area:area+carea] = BpL[ni-d:ni+d+1, nj-d:nj+d+1].flatten()[0:carea]
-        if B2.size > 0:
+        x[area:area+carea] = get_zeropadded_patch(ApL, ni, nj, d).flatten()[0:carea]
+        if A2.size > 0:
             #Use multiresolution features
-            x[area+carea: area*2+carea] = B2[ni-d:ni+d+1, nj-d:nj+d+1].flatten()
-            x[area*2+carea:] = Bp2[ni-d:ni+d+1, nj-d:nj+d+1].flatten()
+            x[area+carea: area*2+carea] = get_zeropadded_patch(A2, ni, nj, d).flatten()
+            x[area*2+carea:] = get_zeropadded_patch(Ap2, ni, nj, d).flatten()
 
         distSqr = np.sum((x - x0)**2)
         if distSqr < minDistSqr:
             minDistSqr = distSqr
             idxmin = [ni, nj]
     return (idxmin, minDistSqr)
+
 
 
 def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False, use_ann=True):
@@ -282,7 +298,7 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
 
         ## Step 1: Make features
         ## Step 1a: Determine location of patches
-        shape = [AL[level].shape[0]-KSpatial+1, AL[level].shape[1]-KSpatial+1]
+        shape = AL[level].shape
         ipatch, jpatch = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing='ij')
         ipatch = ipatch.flatten()
         jpatch = jpatch.flatten()
@@ -290,6 +306,8 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
         APatches = get_patches(AL[level], KSpatial, ipatch, jpatch)
         ApPatches = get_causal_patches(ApL[level], KSpatial, ipatch, jpatch)
         X = np.concatenate((APatches, ApPatches), 1)
+        A2 = np.array([])
+        Ap2 = np.array([])
         B2 = np.array([])
         Bp2 = np.array([])
         if level < NLevels:
@@ -309,32 +327,20 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
         else:
             from sklearn.neighbors import NearestNeighbors
             nn = NearestNeighbors(n_neighbors=1, algorithm='auto', n_jobs=n_jobs).fit(X)
-        
 
-        ## Step 2: Fill in the first few scanLines to prevent the image
-        ## from getting crap in the beginning
-        if level == NLevels:
-            I = np.array(ApL[level]*255, dtype = np.uint8)
-            I = imresize(I, BpL[level].shape)
-            BpL[level] = np.array(I/255.0, dtype = np.float64)
-        else:
-            I = np.array(BpL[level+1]*255, dtype = np.uint8)
-            I = imresize(I, BpL[level].shape)
-            BpL[level] = np.array(I/255.0, dtype = np.float64)
-
-        ## Step 3: Fill in the pixels in scanline order
+        ## Step 2: Fill in the pixels in scanline order
         F = np.zeros(sz)
-        for i in tqdm(range(d, BpL[level].shape[0]-d)):
-            for j in range(d, BpL[level].shape[1]-d):
+        for i in tqdm(range(BpL[level].shape[0])):
+            for j in range(BpL[level].shape[1]):
                 #Make the feature at this pixel
                 #Full patch B
-                F[0:area] = BL[level][i-d:i+d+1, j-d:j+d+1].flatten()
+                F[0:area] = get_zeropadded_patch(BL[level], i, j, d).flatten()
                 #Causal patch B'
-                F[area:area+carea] = BpL[level][i-d:i+d+1, j-d:j+d+1].flatten()[0:carea]
+                F[area:area+carea] = get_zeropadded_patch(BpL[level], i, j, d).flatten()[0:carea]
                 if level < NLevels:
                     #Use multiresolution features
-                    F[area+carea: area*2+carea] = B2[i-d:i+d+1, j-d:j+d+1].flatten()
-                    F[area*2+carea:] = Bp2[i-d:i+d+1, j-d:j+d+1].flatten()
+                    F[area+carea: area*2+carea] = get_zeropadded_patch(B2, i, j, d).flatten()
+                    F[area*2+carea:] = get_zeropadded_patch(Bp2, i, j, d).flatten()
                 #Find index of most closely matching feature point in A
                 tic = time.time()
                 if use_ann:
@@ -345,17 +351,15 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
                 distSqr = dist**2
                 idx = int(idx[0][0])
                 idx = [ipatch[idx], jpatch[idx]]
-                """
                 if Kappa > 0:
                     #Compare with coherent pixel
-                    (idxc, distSqrc) = get_coherence_match(F, BL[level], BpL[level], B2, Bp2, BpLidx[level], KSpatial, i, j) 
+                    (idxc, distSqrc) = get_coherence_match(F, AL[level], ApL[level], A2, Ap2, BpLidx[level], KSpatial, i, j) 
                     fac = 1 + Kappa*(2.0**(level - NLevels))
                     if distSqrc < distSqr*fac*fac:
                         idx = idxc
-                """
                 BpLidx[level][i, j, :] = idx
-                BpL[level][i, j] = ApL[level][idx[0]+d, idx[1]+d]
-                BpLColor[level][i, j, ...] = ApLColor[level][idx[0]+d, idx[1]+d, :]
+                BpL[level][i, j] = ApL[level][idx[0], idx[1]]
+                BpLColor[level][i, j, ...] = ApLColor[level][idx[0], idx[1], :]
             if i%20 == 0 and debug_images:
                 write_image(BpLColor[level], "%i.png"%level)
         print("Time nearest neighbors:", total_time)
