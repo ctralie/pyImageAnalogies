@@ -11,6 +11,7 @@ All of the dependencies below are pip installable
 * scikit-image
 * imageio
 * sklearn
+* pynndescent (for approximate nearest neighbors)
 
 
 ## Running
@@ -40,7 +41,7 @@ python ImageAnalogies.py --A images/newflower-src.jpg --Ap images/newflower-embo
 ### Nonlinear Artistic Filter
 
 ~~~~~ bash
-python ImageAnalogies.py --A images/chair.png --Ap images/chair-stipple.png --B images/girl.png --Bp results/girl-stipple.png --NLevels 4
+python ImageAnalogies.py --A images/chair.png --Ap images/chair-stipple.png --B images/girl.png --Bp results/girl-stipple.png --NLevels 4 --ann 1
 ~~~~~
 
 <table>
@@ -53,7 +54,7 @@ python ImageAnalogies.py --A images/chair.png --Ap images/chair-stipple.png --B 
 ### Texture By Numbers
 
 ~~~~~ bash
-python ImageAnalogies.py --A images/me-mask.png --Ap images/me.jpg --B images/cyclopsmask.png --Bp results/mecyclops.png --Kappa 0.1 --NLevels 2 
+python ImageAnalogies.py --A images/me-mask.png --Ap images/me.jpg --B images/cyclopsmask.png --Bp results/mecyclops.pngcyclops.png --Kappa 0.0 --NLevels 4 --KCoarse 3 --KFine 7 --ann 1
 ~~~~~
 
 <table>
@@ -67,7 +68,7 @@ python ImageAnalogies.py --A images/me-mask.png --Ap images/me.jpg --B images/cy
 ## Texture Synthesis
 
 ~~~~~ bash
-python ImageAnalogies.py --A images/texture1.A.png --Ap images/texture1.Ap.png --B images/texture1.B.png --Bp results/texture1.Bp.png
+python ImageAnalogies.py --A images/texture1.A.png --Ap images/texture1.Ap.png --B images/texture1.B.png --Bp results/texture1.Bp.png --ann 1
 ~~~~~
 
 
@@ -78,11 +79,11 @@ python ImageAnalogies.py --A images/texture1.A.png --Ap images/texture1.Ap.png -
 <tr><td><img src = "images/texture1.B.png"></td><td><img src = "results/texture1.Bp.png"></td></tr>
 </table>
 
-Now let's do the same experiment as above, but with coherence
+Now let's do the same experiment as above, but with coherence (Kappa = 1.0)
 
 
 ~~~~~ bash
-python ImageAnalogies.py --A images/texture1.A.png --Ap images/texture1.Ap.png --B images/texture1.B.png --Bp results/texture1.Bp_Kappa1.png --Kappa 1
+python ImageAnalogies.py --A images/texture1.A.png --Ap images/texture1.Ap.png --B images/texture1.B.png --Bp results/texture1.Bp_Kappa1.png --Kappa 1.0 --ann 1
 ~~~~~
 
 <table>

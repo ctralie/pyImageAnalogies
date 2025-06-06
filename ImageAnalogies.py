@@ -253,6 +253,24 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
         A floating point image of the synthesized image analogy, with the corresponding
         channel dimension
     """
+    #Figure out nearest neighbor methods
+    NNClass = None
+    nn_query = None
+    if use_ann:
+        succeeded = True
+        try:
+            from pynndescent import NNDescent
+        except:
+            succeeded = False
+            print("Warning: Could not import pynndescent: falling back to sklearn exact nearest neighbors")
+        if succeeded:
+            NNClass = lambda X: NNDescent(X)
+            nn_query = lambda nn, F: nn.query(F[None, :], k=1)
+    if not use_ann or not NNClass:
+        from sklearn.neighbors import NearestNeighbors
+        NNClass = lambda X: NearestNeighbors(n_neighbors=1, algorithm='auto', n_jobs=n_jobs).fit(X)
+        nn_query = lambda nn, F: list(nn.kneighbors(F[None, :]))[::-1]
+
     #Make image pyramids
     channel_axis = {}
     if len(A.shape) > 2:
@@ -320,13 +338,7 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
             B2 = imresize(BL[level+1], BL[level].shape)
             Bp2 = imresize(BpL[level+1], BpL[level].shape)
         # Step 1d: Setup nearest neighbor structures
-        nn = None
-        if use_ann:
-            from pynndescent import NNDescent
-            nn = NNDescent(X)
-        else:
-            from sklearn.neighbors import NearestNeighbors
-            nn = NearestNeighbors(n_neighbors=1, algorithm='auto', n_jobs=n_jobs).fit(X)
+        nn = NNClass(X)
 
         ## Step 2: Fill in the pixels in scanline order
         F = np.zeros(sz)
@@ -343,10 +355,7 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
                     F[area*2+carea:] = get_zeropadded_patch(Bp2, i, j, d).flatten()
                 #Find index of most closely matching feature point in A
                 tic = time.time()
-                if use_ann:
-                    idx, dist = nn.query(F[None, :], k=1)
-                else:
-                    dist, idx = nn.kneighbors(F[None, :])
+                idx, dist = nn_query(nn, F)
                 total_time += time.time()-tic
                 distSqr = dist**2
                 idx = int(idx[0][0])
