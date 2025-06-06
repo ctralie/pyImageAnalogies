@@ -1,7 +1,6 @@
 """
 Programmer: Chris Tralie
-Purpose: To implement the basic features of Image Analogies[1] in Python,
-using exact nearest neighbors (pyflann would be faster, but has trouble with Python3)
+Purpose: To implement the basic features of Image Analogies[1] in Python
 
 Image Analogies
 A. Hertzmann, C. Jacobs, N. Oliver, B. Curless, D. Salesin.
@@ -136,12 +135,13 @@ def get_causal_patches(I, dim, i, j):
 
 
 def get_zeropadded_patch(img, i, j, d):
-    res = img[max(0, i-d):i+d+1, max(0, j-d):j+d+1]
-    di = 2*d + 1 - res.shape[0]
-    dj = 2*d + 1 - res.shape[1]
-    if di > 0 or dj > 0:
-        res = np.pad(res, ((0, di), (0, dj)))
-    return res
+    ## TODO: Make this faster
+    ret = np.zeros((2*d+1, 2*d+1))
+    for di in range(-d, d+1):
+        for dj in range(-d, d+1):
+            if i+di >= 0 and i + di < img.shape[0] and j + dj >= 0 and j + dj < img.shape[1]:
+                ret[di+d, dj+d] = img[i+di, j+dj]
+    return ret
 
 
 def get_coherence_match(x0, AL, ApL, A2, Ap2, BpLidx, dim, i, j):
