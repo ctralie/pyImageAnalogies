@@ -220,7 +220,7 @@ def get_coherence_match(x0, AL, ApL, A2, Ap2, BpLidx, dim, i, j):
 
 
 
-def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False, use_ann=True):
+def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs = None, debug_images=False, use_ann=True, verbose=False):
     """
     Perform image analogies
     Parameters
@@ -246,7 +246,8 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
         Number of parallel processes to run for nearest neighbor search (deafult None)
     use_ann: bool
         If True, use approximate nearest neighbors.  If False, use exact nearest neighbors
-    
+    verbose: bool
+        If True, print out debugging information
     Returns
     -------
     Bp: ndarray(M, N, ...)
@@ -286,22 +287,26 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
     BpL = [] # B' values in pyramid (grayscale)
     BpLColor = [] # B' values in pyramid (color)
     BpLidx = [] # Indices of nearest neighbors at each pixel in pyramid
-    print("BL:")
+    if verbose:
+        print("BL:")
     for i in range(len(BL)):
-        print(BL[i].shape)
+        if verbose:
+            print(BL[i].shape)
         BpL.append(np.zeros(BL[i].shape))
         shape = list(BL[i].shape)
         if len(A.shape) > 2:
             shape.append(A.shape[2])
         BpLColor.append(np.zeros(shape))
         BpLidx.append(-1*np.ones((BL[i].shape[0], BL[i].shape[1], 2), dtype=int))
-    print("AL:")
-    for i in range(len(AL)):
-        print(AL[i].shape)
+    if verbose:
+        print("AL:")
+        for i in range(len(AL)):
+            print(AL[i].shape)
 
     #Do multiresolution synthesis
     for level in range(NLevels, -1, -1):
-        print("Doing level", level)
+        if verbose:
+            print("Doing level", level)
         total_time = 0
         ## Step 0: Work out dimension of patches
         KSpatial = KFine
@@ -371,7 +376,8 @@ def imanalogy(A, Ap, B, Kappa = 0.0, NLevels = 3, KCoarse = 5, KFine = 5, n_jobs
                 BpLColor[level][i, j, ...] = ApLColor[level][idx[0], idx[1], :]
             if i%20 == 0 and debug_images:
                 write_image(BpLColor[level], "%i.png"%level)
-        print("Time nearest neighbors:", total_time)
+        if verbose:
+            print("Time nearest neighbors:", total_time)
         if debug_images:
             plt.subplot(122)
             plt.imshow(BpLidx[level][:, :, 0], cmap = 'Spectral')
@@ -392,13 +398,14 @@ if __name__ == '__main__':
     parser.add_argument('--NLevels', type=int, default=2, help="Number of levels to use in multiresolution pyramid")
     parser.add_argument('--KCoarse', type=int, default=5, help="Resolution of coarse patches")
     parser.add_argument('--KFine', type=int, default=5, help="Resolution of finer patches")
-    parser.add_argument('--njobs', type=int, default=1, help="Number of parallel processes to use in nearest neighbor search")
+    parser.add_argument('--njobs', type=int, default=1, help="Number of parallel processes to use in exact nearest neighbor search (only relevant if ann is 0)")
     parser.add_argument('--debugImages', type=int, default=1, help="Whether to output all images in pyramid and chosen indices progressively as B' is being constructed")
     parser.add_argument('--ann', type=int, default=1, help="If 1, use approximate nearest neighbors (requires pynndescent).  If 0, revert to sklearn exact nearest neighbors")
+    parser.add_argument('--verbose', type=int, default=0, help="If 1, print debugging info")
     opt = parser.parse_args()
 
     A = read_image(opt.A)
     Ap = read_image(opt.Ap)
     B = read_image(opt.B)
-    Bp = imanalogy(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debug_images=bool(opt.debugImages), use_ann=(opt.ann == 1))
+    Bp = imanalogy(A, Ap, B, Kappa=opt.Kappa, NLevels=opt.NLevels, KCoarse=opt.KCoarse, KFine=opt.KFine, n_jobs=opt.njobs, debug_images=bool(opt.debugImages), use_ann=(opt.ann == 1), verbose=(opt.verbose == 1))
     write_image(Bp, opt.Bp)
